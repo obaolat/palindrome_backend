@@ -9,7 +9,7 @@ app = Flask(__name__)
 CORS(app)
 
 # Database configuration
-app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://postgres:yourpassword@localhost:5432/task_manager'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'postgresql://obaloluwa:mB2cxk2NF2kY7doW6X0Uhj5Abr5XsrbF@dpg-cu434fl6l47c73f24kc0-a.oregon-postgres.render.com/palindrome_oba'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 migrate = Migrate(app, db)
@@ -40,7 +40,7 @@ class Task(db.Model):
 
 
 class Product(db.Model):
-    id = db.Column(db.Integer, primary_key=True)    
+    id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(255), nullable=False)
     creation_time = db.Column(db.DateTime)
     cost = db.Column(db.Numeric)
@@ -191,6 +191,7 @@ def get_task_products_context(task_id, context_id):
             "id": tp.product_id,
             "name": tp.product.name,
             "deployment_state": tp.deployment_state,
+            "instance_id":tp.instance_id,
         }
         for tp in task_products
         if tp.type == "output"
@@ -201,6 +202,7 @@ def get_task_products_context(task_id, context_id):
             "id": tp.product_id,
             "name": tp.product.name,
             "deployment_state": tp.deployment_state,
+            "instance_id":tp.instance_id,
         }
         for tp in task_products
         if tp.type == "input"
@@ -227,27 +229,66 @@ def get_tasks_for_product(product_id):
     
     return jsonify([task.to_dict() for task in tasks])
     
-    """
 
 @app.route('/api/products/<int:product_id>/instance/<string:instance_id>/tasks', methods=['GET'])
 def get_tasks_for_product_in_context(product_id, instance_id):
     type = request.args.get('type')  # 'input' or 'output'
+    context_id = request.args.get('context_id')
     if type == 'input':
         tasks = Task.query.join(TaskProduct).filter(
             TaskProduct.product_id == product_id,
             TaskProduct.type == 'output',
-            TaskProduct.instance_id == instance_id
+            TaskProduct.instance_id == instance_id,
+            TaskProduct.context_id == context_id,
         ).all()
     elif type == 'output':
         tasks = Task.query.join(TaskProduct).filter(
             TaskProduct.product_id == product_id,
             TaskProduct.type == 'input',
-            TaskProduct.instance_id == instance_id
+            TaskProduct.instance_id == instance_id,
+            TaskProduct.context_id == context_id
         ).all()
     else:
         return jsonify({'error': 'Invalid type parameter'}), 400
     
     return jsonify([task.to_dict() for task in tasks])
+    
+        """
+
+@app.route('/api/products/<int:product_id>/instance/<string:instance_id>/tasks', methods=['GET'])
+def get_tasks_for_product_in_context(product_id, instance_id):
+    type = request.args.get('type')  # 'input' or 'output'
+    
+    if type not in ['input', 'output']:
+        return jsonify({'error': 'Invalid type parameter'}), 400
+
+    # Determine the relevant type for filtering (inverse logic)
+    related_type = 'output' if type == 'input' else 'input'
+
+    # Query tasks along with their context_id
+    tasks_with_context = (
+        Task.query
+        .join(TaskProduct)
+        .filter(
+            TaskProduct.product_id == product_id,
+            TaskProduct.type == related_type,
+            TaskProduct.instance_id == instance_id
+        )
+        .with_entities(Task, TaskProduct.context_id)  # Select task and context_id
+        .all()
+    )
+
+    # Build response with tasks and their associated context_id
+    response = [
+        {
+            **task.to_dict(),  # Include task fields
+            'context_id': context_id  # Add the associated context_id
+        }
+        for task, context_id in tasks_with_context
+    ]
+
+    return jsonify(response)
+
 
 
 
