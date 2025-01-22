@@ -253,7 +253,11 @@ def get_tasks_for_product_in_context(product_id, instance_id):
     
     return jsonify([task.to_dict() for task in tasks])
     
-        """
+  
+  
+  """      
+
+
 
 @app.route('/api/products/<int:product_id>/instance/<string:instance_id>/tasks', methods=['GET'])
 def get_tasks_for_product_in_context(product_id, instance_id):
@@ -274,7 +278,7 @@ def get_tasks_for_product_in_context(product_id, instance_id):
             TaskProduct.type == related_type,
             TaskProduct.instance_id == instance_id
         )
-        .with_entities(Task, TaskProduct.context_id)  # Select task and context_id
+        .with_entities(Task, TaskProduct.context_id, TaskProduct.deployment_state)  # Select task and context_id
         .all()
     )
 
@@ -282,14 +286,105 @@ def get_tasks_for_product_in_context(product_id, instance_id):
     response = [
         {
             **task.to_dict(),  # Include task fields
-            'context_id': context_id  # Add the associated context_id
+            'context_id': context_id,  # Add the associated context_id
+            'deployment_state': deployment_state,
+            
         }
-        for task, context_id in tasks_with_context
+        for task, context_id, deployment_state in tasks_with_context
     ]
 
     return jsonify(response)
 
 
+@app.route('/api/products/<int:product_id>/instance/<string:instance_id>/tasks', methods=['PATCH'])
+def update_tasks_for_product_in_context(product_id, instance_id):
+    
+    #Update deployment status of tasks (input or output) associated with a product in a specific context.
+   
+    data = request.json
+    print("Product ID:", product_id)
+    print("Instance ID:", instance_id)
+    print("Data received:", data) 
+    
+    
+    
+    task_id = data.get("task_id")
+    action = data.get("action")  # "add", "delete"
+    new_state = data.get("state")  # "V" or "X"
+    task_type = data.get("type")  # "input" or "output"
+
+    # Validate inputs
+    if not task_id or not action or not task_type:
+        return jsonify({"error": "Missing required fields"}), 400
+
+    if task_type not in ["input", "output"]:
+        return jsonify({"error": "Invalid task type"}), 400
+
+    # Validate product and task existence
+    product = Product.query.get(product_id)
+    task = Task.query.get(task_id)
+
+    if not product:
+        return jsonify({"error": "Product not found"}), 404
+
+    if not task:
+        return jsonify({"error": "Task not found"}), 404
+
+    # Query for existing task-product association by context
+    existing_association = TaskProduct.query.filter_by(
+        product_id=product_id,
+        task_id=task_id,
+        type=task_type,
+        instance_id=instance_id
+    ).first()
+    
+    associations = TaskProduct.query.filter_by(
+        product_id=product_id,
+        instance_id=instance_id
+    ).all()
+    print("Existing associations for product:", [assoc.__dict__ for assoc in associations])
+    
+    existing_association = TaskProduct.query.filter_by(
+        product_id=product_id,
+        task_id=task_id
+    ).first()
+    print("Partial match:", existing_association)
+
+
+
+    # Handle "add" action
+    if action == "add":
+        if not existing_association:
+            new_association = TaskProduct(
+                product_id=product_id,
+                task_id=task_id,
+                deployment_state="V",  # Default state
+                type=task_type,
+                instance_id=instance_id,
+                context_id=f"{product_id}-{instance_id}",  # Generate context_id
+            )
+            db.session.add(new_association)
+        else:
+            return jsonify({"error": "Task already added for this context"}), 400
+
+    # Handle "delete" action
+    elif action == "delete":
+        if existing_association:
+            db.session.delete(existing_association)
+        else:
+            return jsonify({"error": "Task not found for this context"}), 404
+
+    # Handle "update state" action
+    elif new_state:
+        if existing_association:
+            existing_association.deployment_state = new_state
+        else:
+            return jsonify({"error": "Task not found for this context"}), 404
+
+    # Commit changes to the database
+    db.session.commit()
+
+    return jsonify({"message": "Task updated successfully"})
 
 
 @app.route('/api/tasks/<int:task_id>/products/<int:product_id>', methods=['DELETE'])
@@ -676,6 +771,6 @@ def serve_react_app(path):
 
 if __name__ == '__main__':
     with app.app_context():
-
+        #db.drop_all()
         db.create_all()
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(debug=True)
